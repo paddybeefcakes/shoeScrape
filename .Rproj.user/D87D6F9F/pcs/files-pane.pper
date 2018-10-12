@@ -1,0 +1,9 @@
+{
+    "path" : "~/Desktop/shoeScrape",
+    "sortOrder" : [
+        {
+            "ascending" : true,
+            "columnIndex" : 2
+        }
+    ]
+}
