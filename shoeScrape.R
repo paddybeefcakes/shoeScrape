@@ -21,7 +21,7 @@ library(furrr)
 # Future Exe Plan #
 #-----------------#
 
-plan(list(tweak(multiprocess, workers = 4L), tweak(multiprocess, workers = 12L)))
+plan(list(tweak(multiprocess, workers = 4L), tweak(multiprocess, workers = 6L)))
 
 #----------------------#
 # Set Script Arguments #
@@ -46,8 +46,8 @@ pmapArgs <- list(brands = combos[,'brands'], dates = combos[,'dates'])
 # Execute Scrapper #
 #------------------#
 
-results <- #future_pmap(
-  pmap(
+results <- future_pmap(
+  # pmap(
   pmapArgs,
   safely({
   function(brands, dates){
@@ -56,13 +56,13 @@ results <- #future_pmap(
   remDr <- RSelenium::rsDriver(browser = 'chrome') # if needed
 
   remDr$client$navigate(sprintf("https://stockx.com/%s?years=%s", brands, dates))
-  Sys.sleep(5)
+  Sys.sleep(10)
 
   print(glue::glue("Brand: {brands}"))
   print(glue::glue("Date: {dates}"))
 
   loadMoreBtn <- try({
-    remDr$client$findElement(using = 'css selector', ".browse-load-more > button")
+    remDr$client$findElement(using = 'css selector', ".browse-load-more > .btn")
   })
 
   numClick <- 0
@@ -73,7 +73,7 @@ results <- #future_pmap(
   while(class(loopTry) == "NULL"){
     print("Clicking load more")
     loopTry <- try({loadMoreBtn$clickElement()})
-    Sys.sleep(2)
+    Sys.sleep(5)
   }
 
   shoeURLS <- read_html(remDr$client$getPageSource()[[1]]) %>%
@@ -101,7 +101,7 @@ results <- #future_pmap(
           lastPrice <- shoePage %>%
             html_node(".last-sale > .sale-value") %>%
             html_text() %>%
-            substr(2,nchar(.)) %>%
+            substr(5, nchar(.)) %>%
             as.numeric()
 
           ticker <- shoePage %>%
@@ -149,7 +149,7 @@ results <- #future_pmap(
           numberSales <- shoePage %>%
             html_nodes('div.gauge-value') %>%
             html_text() %>%
-            .[1] %>%warnings
+            .[1] %>%
             as.numeric()
 
           shoeSize <- shoePage %>%
@@ -175,7 +175,7 @@ results <- #future_pmap(
                  tradeRange = tradeRange,
                  shoeVol = shoeVol,
                  pricePrem = pricePrem,
-                 # numberSales = numberSales,
+                 numberSales = numberSales,
                  sizePriceTBL = sizePriceTBL
                  )
         }
@@ -188,11 +188,9 @@ results <- #future_pmap(
 
 }})) %>%
   map(function(x){x$result}) %>%
-  set_names(paste0(pmapArgs[['brands']], '-' , pmapArgs[['dates']])) 
+  set_names(paste0(pmapArgs[['brands']], '-' , pmapArgs[['dates']]))
 
 # results2 <- map(results,function(x){x[!duplicated(x),]})
-
-saveRDS(results2, 'showData.Rds')
 
 # data %>% reduce(function(x, y){bind_rows(x, y)}) %>% select(-sizePriceTBL)
 
