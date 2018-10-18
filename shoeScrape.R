@@ -12,26 +12,29 @@ options(
 # Load Lobraries #
 #----------------#
 
-library(RSelenium)
-library(rvest)
-library(tidyverse)
-library(furrr)
+suppressPackageStartupMessages({
+  library(RSelenium)
+  library(rvest)
+  library(tidyverse)
+  library(furrr)
+})
 
 #-----------------#
 # Future Exe Plan #
 #-----------------#
 
-plan(list(tweak(multiprocess, workers = 4L), tweak(multiprocess, workers = 6L)))
+plan(list(tweak(multiprocess, workers = 3L), tweak(multiprocess, workers = 4L)))
+# plan(multiprocess, workers = 12L)
 
 #----------------------#
 # Set Script Arguments #
 #----------------------#
 
-# datesList <- c('2018', '2017', '2016', '2015', '2014')
+datesList <- c('2018', '2017', '2016', '2015', '2014')
 brandsList <- c('adidas', 'retro-jordans', 'nike', 'other-sneakers')
 
-datesList <- c('2018')
-# brandsList <- c('adidas')
+# datesList <- c('2018')
+# brandsList <- c('other-sneakers')
 
 basePage <- 'http://stockx.com'
 
@@ -41,157 +44,156 @@ combos <- expand.grid(brands = brandsList, dates = datesList, stringsAsFactors =
 # Build combos into named list for pmap
 pmapArgs <- list(brands = combos[,'brands'], dates = combos[,'dates'])
 
-
 #------------------#
 # Execute Scrapper #
 #------------------#
 
 results <- future_pmap(
-  # pmap(
-  pmapArgs,
-  safely({
-  function(brands, dates){
+    # pmap(
+    pmapArgs,
+    safely({
+      function(brands, dates){
 
-  # Start Chrome for webscraping.
-  remDr <- RSelenium::rsDriver(browser = 'chrome') # if needed
+      # Start Chrome for webscraping.
+      remDr <- RSelenium::rsDriver(browser = 'chrome')
 
-  remDr$client$navigate(sprintf("https://stockx.com/%s?years=%s", brands, dates))
-  Sys.sleep(10)
+      remDr$client$navigate(sprintf("https://stockx.com/%s?years=%s", brands, dates))
+      Sys.sleep(20)
 
-  print(glue::glue("Brand: {brands}"))
-  print(glue::glue("Date: {dates}"))
+      print(glue::glue("Brand: {brands}"))
+      print(glue::glue("Date:  {dates}"))
 
-  loadMoreBtn <- try({
-    remDr$client$findElement(using = 'css selector', ".browse-load-more > .btn")
-  })
+      loadMoreBtn <- try({remDr$client$findElement(using = 'css', "div.browse-load-more > button.btn")})
+      
+      numClick <- 0
+      
+      while(try({loadMoreBtn$getElementText()[[1]]}) == "Load More"){
+        print("Clicking load more")
+        loadMoreBtn <<- try({remDr$client$findElement(using = 'css', "div.browse-load-more > button.btn")})
+        
+        if(loadMoreBtn$getElementText()[[1]] != "Load More"){ break }
+        
+        loopTry <- try({loadMoreBtn$clickElement()})
+        Sys.sleep(6)
+      }
+      
+      shoeURLS <- read_html(remDr$client$getPageSource()[[1]]) %>%
+        html_nodes(".browse-grid:not(.loading) > a") %>%
+        html_attr('href') %>%
+        paste0(basePage, .)
 
-  numClick <- 0
+      # Close Web Page.
+      remDr$client$close()
 
-  print("Clicking load more")
-  loopTry <- loadMoreBtn$clickElement()
+      print(glue::glue("length: {length(shoeURLS)} \nYear: {dates} \nBrand: {brands}"))
 
-  while(class(loopTry) == "NULL"){
-    print("Clicking load more")
-    loopTry <- try({loadMoreBtn$clickElement()})
-    Sys.sleep(5)
-  }
+      #----------------------------#
+      # Start Anchor Tag List Loop #
+      #----------------------------#
 
-  shoeURLS <- read_html(remDr$client$getPageSource()[[1]]) %>%
-    html_nodes(".browse-grid:not(.loading) > a") %>%
-    html_attr('href') %>%
-    paste0(basePage, .)
+      shoeData <-
+        future_map(
+        # map(
+          shoeURLS,
+          safely({
+            function(x){
 
-  print(glue::glue("length: {length(shoeURLS)} \nYear: {dates} \nBrand: {brands}"))
+              print(x)
 
-  #----------------------------#
-  # Start Anchor Tag List Loop #
-  #----------------------------#
+              shoePage <- read_html(x)
 
-  shoeData <-
-    future_map(
-    # map(
-      shoeURLS,
-      safely({
-        function(x){
+              lastPrice <- shoePage %>%
+                html_node(".last-sale > .sale-value") %>%
+                html_text() %>%
+                substr(5, nchar(.)) %>%
+                as.numeric()
 
-          print(x)
+              ticker <- shoePage %>%
+                html_nodes(".header-stat") %>%
+                .[2] %>%
+                html_text() %>%
+                substr(9, nchar(.))
 
-          shoePage <- read_html(x)
+              shoeName <- shoePage %>%
+                html_nodes('.name') %>%
+                html_text()
 
-          lastPrice <- shoePage %>%
-            html_node(".last-sale > .sale-value") %>%
-            html_text() %>%
-            substr(5, nchar(.)) %>%
-            as.numeric()
+              tradeVolmn <- shoePage %>%
+                html_nodes('.last-sale-block > div > .sale-size > .size-container > .bid-ask-sizes') %>%
+                html_text()
 
-          ticker <- shoePage %>%
-            html_nodes(".header-stat") %>%
-            .[2] %>%
-            html_text() %>%
-            substr(9, nchar(.))
+              shoeDesc <- shoePage %>%
+                html_node(".product-description > p") %>%
+                html_text()
 
-          shoeName <- shoePage %>%
-            html_nodes('.name') %>%
-            html_text()
+              # hiLoPrice <- shoePage %>%
+              #   html_nodes('.ft-high-low-col > .value-container > span') %>%
+              #   html_text()
 
-          tradeVolmn <- shoePage %>%
-            html_nodes('.last-sale-block > div > .sale-size > .size-container > .bid-ask-sizes') %>%
-            html_text()
+              # str_locate(test[1], "\\$")
 
-          shoeDesc <- shoePage %>%
-            html_node(".product-description > p") %>%
-            html_text()
+              tradeRange <- shoePage %>%
+                html_nodes('.ds-range-col.market-up') %>%
+                .[[2]] %>%
+                html_text()
 
-          # hiLoPrice <- shoePage %>%
-          #   html_nodes('.ft-high-low-col > .value-container > span') %>%
-          #   html_text()
+              shoeVol <- shoePage %>%
+                html_node("li.volatility-col.market-down > div > span") %>%
+                html_text() %>%
+                substr(1, nchar(.) - 1) %>%
+                as.numeric()
 
-          # str_locate(test[1], "\\$")
+              pricePrem <- shoePage %>%
+                html_nodes('div.gauge-value') %>%
+                html_text() %>%
+                .[2] %>%
+                substr(1, nchar(.) -1) %>%
+                as.numeric()
 
-          tradeRange <- shoePage %>%
-            html_nodes('.ds-range-col.market-up') %>%
-            .[[2]] %>%
-            html_text()
+              numberSales <- shoePage %>%
+                html_nodes('div.gauge-value') %>%
+                html_text() %>%
+                .[1] %>%
+                as.numeric()
 
-          shoeVol <- shoePage %>%
-            html_node("li.volatility-col.market-down > div > span") %>%
-            html_text() %>%
-            substr(1, nchar(.) - 1) %>%
-            as.numeric()
+              shoeSize <- shoePage %>%
+                html_nodes('.select-options > ul > li > .inset > .title') %>%
+                html_text()
 
-          pricePrem <- shoePage %>%
-            html_nodes('div.gauge-value') %>%
-            html_text() %>%
-            .[2] %>%
-            substr(1, nchar(.) -1) %>%
-            as.numeric()
-
-          numberSales <- shoePage %>%
-            html_nodes('div.gauge-value') %>%
-            html_text() %>%
-            .[1] %>%
-            as.numeric()
-
-          shoeSize <- shoePage %>%
-            html_nodes('.select-options > ul > li > .inset > .title') %>%
-            html_text()
-
-          sizePrice <- shoePage %>%
-            html_nodes('.select-options > ul > li > .inset > .subtitle') %>%
-            html_text() %>%
-            substr(2, nchar(.))
+              sizePrice <- shoePage %>%
+                html_nodes('.select-options > ul > li > .inset > .subtitle') %>%
+                html_text() %>%
+                substr(2, nchar(.))
 
 
-          sizePriceTBL <- list(tibble(shoeSize = shoeSize,
-                                      sizePrice = sizePrice))
+              sizePriceTBL <- list(tibble(shoeSize = shoeSize,
+                                          sizePrice = sizePrice))
 
-          tibble(date = dates,
-                 brand = brands,
-                 lastPrice = lastPrice,
-                 ticker   = ticker,
-                 shoeName = shoeName,
-                 tradeVolmn = tradeVolmn,
-                 shoeDesc = shoeDesc,
-                 tradeRange = tradeRange,
-                 shoeVol = shoeVol,
-                 pricePrem = pricePrem,
-                 numberSales = numberSales,
-                 sizePriceTBL = sizePriceTBL
-                 )
-        }
-
-      })
-
-    ) %>%
-
-    map_df(function(x){x$result})
-
-}})) %>%
-  map(function(x){x$result}) %>%
-  set_names(paste0(pmapArgs[['brands']], '-' , pmapArgs[['dates']]))
+              tibble(date = dates,
+                     brand = brands,
+                     lastPrice = lastPrice,
+                     ticker   = ticker,
+                     shoeName = shoeName,
+                     tradeVolmn = tradeVolmn,
+                     shoeDesc = shoeDesc,
+                     tradeRange = tradeRange,
+                     shoeVol = shoeVol,
+                     pricePrem = pricePrem,
+                     numberSales = numberSales,
+                     sizePriceTBL = sizePriceTBL
+                     )
+            }
+          })
+        ) %>%
+          map_df(function(x){x$result})
+      }
+    })
+  ) %>%
+    map(function(x){x$result}) %>%
+    set_names(paste0(pmapArgs[['brands']], '-' , pmapArgs[['dates']]))
 
 # results2 <- map(results,function(x){x[!duplicated(x),]})
 
 # data %>% reduce(function(x, y){bind_rows(x, y)}) %>% select(-sizePriceTBL)
 
-write.csv(results2 %>% reduce(function(x, y){bind_rows(x, y)}) %>% select(-sizePriceTBL, -numberSales), 'shoe.csv')
+# write.csv(results2 %>% reduce(function(x, y){bind_rows(x, y)}) %>% select(-sizePriceTBL, -numberSales), 'shoe.csv')
